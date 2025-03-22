@@ -40,7 +40,7 @@ function M.setup_keybindings()
   vim.api.nvim_set_keymap(
     "n",
     M.config.keys.open,
-    ":lua require('ollama-chat').open_chat_window()<CR>",
+    ":lua require('ai-chat').open_chat_window()<CR>",
     { noremap = true, silent = true }
   )
 end
@@ -126,7 +126,7 @@ function M.open_chat_window()
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "Type your question and press <Enter> to send.", "", prompt })
 
   -- Set up a prompt handler
-  vim.api.nvim_buf_set_keymap(buf, "n", "<CR>", ":lua require('ollama-chat').send_prompt()<CR>", { noremap = true, silent = true })
+  vim.api.nvim_buf_set_keymap(buf, "n", "<CR>", ":lua require('ai-chat').send_prompt()<CR>", { noremap = true, silent = true })
 end
 
 -- Send the current buffer content as a prompt to Ollama
