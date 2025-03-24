@@ -32,6 +32,13 @@ local default_config = {
 -- Merge user configuration with defaults
 function M.setup(user_config)
 	M.config = vim.tbl_deep_extend("force", default_config, user_config or {})
+
+	-- Set default window position/size if not specified
+	M.config.window = M.config.window or {}
+	M.config.window.width = M.config.window.width or 60
+	M.config.window.height = M.config.window.height or 20
+	M.config.window.border = M.config.window.border or "rounded"
+
 	M.setup_keybindings()
 end
 
@@ -43,26 +50,46 @@ function M.setup_keybindings()
 		":lua require('ai-chat').open_chat_window()<CR>",
 		{ noremap = true, silent = true }
 	)
+
+	-- Add mapping to close chat from insert mode
+	vim.api.nvim_set_keymap("i", "<C-c>", "<Esc>:q<CR>", { noremap = true, silent = true })
 end
 
 function M.create_floating_window()
 	local buf = vim.api.nvim_create_buf(false, true)
+	local width = math.min(M.config.window.width, math.floor(vim.o.columns * 0.4)) -- Max 40% of screen width
+	local height = math.min(M.config.window.height, vim.o.lines - 4) -- Leave some margin
+
 	local win = vim.api.nvim_open_win(buf, true, {
 		relative = "editor",
-		width = M.config.window.width,
-		height = M.config.window.height,
-		row = math.floor((vim.o.lines - M.config.window.height) / 2), -- Center vertically
-		col = math.floor((vim.o.columns - M.config.window.width) / 2), -- Center horizontally
+		width = width,
+		height = height,
+		row = math.floor((vim.o.lines - height) / 2), -- Center vertically
+		col = vim.o.columns - width - 2, -- Right side with small margin
 		style = "minimal",
 		border = M.config.window.border,
 		noautocmd = true,
 	})
 
-	-- Window settings
+	-- Window styling
 	vim.api.nvim_win_set_option(win, "winhl", "NormalFloat:Normal")
 	vim.api.nvim_win_set_option(win, "winblend", 0)
 
+	-- Initial content with clear separation
+	vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
+		"=== AI Chat ===",
+		"",
+		"Type your message below and press <Enter> to send:",
+		"----------------------------------------",
+		"",
+	})
+
+	-- Start in insert mode at the end
+	vim.api.nvim_win_set_cursor(win, { 6, 0 })
+	vim.cmd("startinsert!")
+
 	-- Keymaps
+	vim.api.nvim_buf_set_keymap(buf, "i", "<CR>", "<Cmd>lua require('ai-chat').send_prompt()<CR>", { noremap = true })
 	vim.api.nvim_buf_set_keymap(buf, "n", "q", ":q<CR>", { noremap = true, silent = true })
 	vim.api.nvim_buf_set_keymap(buf, "n", "<Esc>", ":q<CR>", { noremap = true, silent = true })
 
@@ -71,34 +98,37 @@ end
 
 -- Ask Ollama a question
 function M.ask_ollama(prompt)
-	-- Escape special JSON characters
-	local escaped_prompt = prompt:gsub("\\", "\\\\"):gsub('"', '\\"'):gsub("\n", "\\n")
+	-- Create temporary file for the prompt to avoid escaping issues
+	local tmpfile = os.tmpname()
+	local f = io.open(tmpfile, "w")
+	f:write(prompt)
+	f:close()
 
 	local cmd = string.format(
-		[[curl -s -X POST %s/api/generate -d '{"model": "%s", "prompt": "%s"}']],
+		[[curl -s -X POST %s/api/generate -d @%s -H "Content-Type: application/json"]],
 		M.config.ollama.base_url,
-		M.config.ollama.model,
-		escaped_prompt
+		tmpfile
 	)
 
 	local response = vim.fn.system(cmd)
+	os.remove(tmpfile)
 
 	-- Error handling
 	if vim.v.shell_error ~= 0 then
 		return nil, "Failed to communicate with Ollama. Is it running?"
 	end
 
-	-- Parse the response
+	-- Parse response
 	local ok, json = pcall(vim.fn.json_decode, response)
 	if not ok then
-		return nil, "Failed to parse Ollama response: " .. response
+		return nil, "Invalid response from Ollama: " .. response
 	end
 
 	if json.error then
 		return nil, json.error
 	end
 
-	return json.response, nil
+	return json.response or json.text or "No response text found", nil
 end
 
 -- Get dynamic prompt based on context
@@ -155,17 +185,38 @@ end
 -- Send the current buffer content as a prompt to Ollama
 function M.send_prompt()
 	local buf = vim.api.nvim_get_current_buf()
-	local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+	local win = vim.api.nvim_get_current_win()
+
+	-- Get only the user input (below the separator)
+	local lines = vim.api.nvim_buf_get_lines(buf, 5, -1, false)
 	local prompt = table.concat(lines, "\n")
 
-	-- Ask Ollama and display the response
-	local response, err = M.ask_ollama(prompt)
-	if err then
-		vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "Error: " .. err })
+	-- Clear the input area
+	vim.api.nvim_buf_set_lines(buf, 5, -1, false, { "" })
+
+	if #prompt:gsub("%s+", "") == 0 then
+		vim.api.nvim_echo({ { "Error: Prompt cannot be empty", "ErrorMsg" } }, true, {})
 		return
 	end
 
-	vim.api.nvim_buf_set_lines(buf, 0, -1, false, vim.split(response, "\n"))
-end
+	-- Add user message to chat history
+	vim.api.nvim_buf_set_lines(buf, -1, -1, false, { "You: " .. prompt, "" })
 
-return M
+	-- Get response
+	local response, err = M.ask_ollama(prompt)
+	if err then
+		vim.api.nvim_buf_set_lines(buf, -1, -1, false, { "Error: " .. err, "" })
+	else
+		-- Split response into lines and add to buffer
+		local response_lines = {}
+		for line in response:gmatch("[^\n]+") do
+			table.insert(response_lines, "AI: " .. line)
+		end
+		vim.api.nvim_buf_set_lines(buf, -1, -1, false, response_lines)
+		vim.api.nvim_buf_set_lines(buf, -1, -1, false, { "" })
+	end
+
+	-- Scroll to bottom and return to insert mode
+	vim.api.nvim_win_set_cursor(win, { vim.api.nvim_buf_line_count(buf), 0 })
+	vim.cmd("startinsert!")
+end
