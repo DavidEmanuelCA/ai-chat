@@ -45,20 +45,24 @@ function M.setup_keybindings()
 	)
 end
 
--- Create a floating window
 function M.create_floating_window()
 	local buf = vim.api.nvim_create_buf(false, true)
 	local win = vim.api.nvim_open_win(buf, true, {
 		relative = "editor",
 		width = M.config.window.width,
 		height = M.config.window.height,
-		row = M.config.window.row,
-		col = M.config.window.col,
+		row = math.floor((vim.o.lines - M.config.window.height) / 2), -- Center vertically
+		col = math.floor((vim.o.columns - M.config.window.width) / 2), -- Center horizontally
 		style = "minimal",
 		border = M.config.window.border,
+		noautocmd = true,
 	})
 
-	-- Set keymaps for the window
+	-- Window settings
+	vim.api.nvim_win_set_option(win, "winhl", "NormalFloat:Normal")
+	vim.api.nvim_win_set_option(win, "winblend", 0)
+
+	-- Keymaps
 	vim.api.nvim_buf_set_keymap(buf, "n", "q", ":q<CR>", { noremap = true, silent = true })
 	vim.api.nvim_buf_set_keymap(buf, "n", "<Esc>", ":q<CR>", { noremap = true, silent = true })
 
@@ -67,24 +71,27 @@ end
 
 -- Ask Ollama a question
 function M.ask_ollama(prompt)
+	-- Escape special JSON characters
+	local escaped_prompt = prompt:gsub("\\", "\\\\"):gsub('"', '\\"'):gsub("\n", "\\n")
+
 	local cmd = string.format(
-		'curl -s -X POST %s/api/generate -d \'{"model": "%s", "prompt": "%s"}\'',
+		[[curl -s -X POST %s/api/generate -d '{"model": "%s", "prompt": "%s"}']],
 		M.config.ollama.base_url,
 		M.config.ollama.model,
-		prompt
+		escaped_prompt
 	)
 
 	local response = vim.fn.system(cmd)
 
-	-- Error handling for Ollama
+	-- Error handling
 	if vim.v.shell_error ~= 0 then
 		return nil, "Failed to communicate with Ollama. Is it running?"
 	end
 
-	-- Parse the response (Ollama returns JSON)
+	-- Parse the response
 	local ok, json = pcall(vim.fn.json_decode, response)
 	if not ok then
-		return nil, "Failed to parse Ollama response."
+		return nil, "Failed to parse Ollama response: " .. response
 	end
 
 	if json.error then
