@@ -120,46 +120,50 @@ function M.open_chat_window()
 end
 
 function M.send_prompt()
-    local buf = vim.api.nvim_get_current_buf()
-    local win = vim.api.nvim_get_current_win()
-    
-    -- 1. Get user input
-    local input_lines = vim.api.nvim_buf_get_lines(buf, 4, -1, false)
-    local prompt = table.concat(input_lines, " "):gsub("%s+", " "):gsub("^%s*", ""):gsub("%s*$", "")
-    
-    if #prompt == 0 then
-        vim.api.nvim_echo({{"Error: Empty prompt", "ErrorMsg"}}, true, {})
-        return
-    end
+	local buf = vim.api.nvim_get_current_buf()
+	local win = vim.api.nvim_get_current_win()
 
-    -- 2. Add user message to history
-    vim.api.nvim_buf_set_lines(buf, -1, -1, false, {"You: "..prompt, ""})
+	-- 1. Get and validate user input
+	local input_lines = vim.api.nvim_buf_get_lines(buf, 4, -1, false)
+	local prompt = table.concat(input_lines, " "):gsub("%s+", " "):gsub("^%s*", ""):gsub("%s*$", "")
 
-    -- 3. Clear input area
-    vim.api.nvim_buf_set_lines(buf, 4, -1, false, {""})
+	if #prompt == 0 then
+		vim.api.nvim_echo({ { "Error: Empty prompt", "ErrorMsg" } }, true, {})
+		return
+	end
 
-    -- 4. Get and display response
-    local response, err = M.ask_ollama(prompt)
-    if err then
-        vim.api.nvim_buf_set_lines(buf, -1, -1, false, {"Error: "..err, ""})
-    else
-        -- Process the response to ensure it's displayable
-        response = response or "No response received"
-        response = response:gsub("\r", ""):gsub("\n", " "):gsub("%s%s+", " ")
-        
-        -- Add AI response to chat
-        vim.api.nvim_buf_set_lines(buf, -1, -1, false, {
-            "AI: "..response,
-            "",
-            "----------------------------------------",
-            "",
-            ""
-        })
-    end
+	-- 2. Add user message to history (single line)
+	vim.api.nvim_buf_set_lines(buf, -1, -1, false, { "You: " .. prompt, "" })
 
-    -- 5. Return to insert mode at the input position
-    vim.api.nvim_win_set_cursor(win, {5, 0})
-    vim.cmd('startinsert')
+	-- 3. Clear input area
+	vim.api.nvim_buf_set_lines(buf, 4, -1, false, { "" })
+
+	-- 4. Get response from Ollama
+	local response, err = M.ask_ollama(prompt)
+	if err then
+		vim.api.nvim_buf_set_lines(buf, -1, -1, false, { "Error: " .. err, "" })
+	else
+		-- 5. Process response with absolute safety
+		local safe_response = type(response) == "string" and response or "No response received"
+
+		-- Create safe output lines
+		local output_lines = {
+			"AI: " .. safe_response:gsub("[\r\n]", " "), -- Force single line
+			"",
+			"----------------------------------------",
+			"",
+			"",
+		}
+
+		-- 6. Insert lines one at a time (bulletproof)
+		for _, line in ipairs(output_lines) do
+			vim.api.nvim_buf_set_lines(buf, -1, -1, false, { line })
+		end
+	end
+
+	-- 7. Return to insert mode at input position
+	vim.api.nvim_win_set_cursor(win, { 5, 0 })
+	vim.cmd("startinsert")
 end
 
 return M
