@@ -123,55 +123,66 @@ function M.send_prompt()
 	local buf = vim.api.nvim_get_current_buf()
 	local win = vim.api.nvim_get_current_win()
 
-	-- 1. Get user input safely
-	local input_lines = vim.api.nvim_buf_get_lines(buf, 4, -1, false)
-	local prompt = table.concat(input_lines, " "):gsub("%s+", " "):gsub("^%s*", ""):gsub("%s*$", "")
+	-- 1. Get and validate user input
+	local success, input_lines = pcall(vim.api.nvim_buf_get_lines, buf, 4, -1, false)
+	if not success then
+		vim.api.nvim_echo({ { "Error: Failed to get input lines", "ErrorMsg" } }, true, {})
+		return
+	end
 
+	local prompt = table.concat(input_lines, " "):gsub("%s+", " "):gsub("^%s*", ""):gsub("%s*$", "")
 	if #prompt == 0 then
 		vim.api.nvim_echo({ { "Error: Empty prompt", "ErrorMsg" } }, true, {})
 		return
 	end
 
 	-- 2. Add user message to history
-	vim.api.nvim_buf_set_lines(buf, -1, -1, false, { "You: " .. prompt, "" })
+	pcall(vim.api.nvim_buf_set_lines, buf, -1, -1, false, { "You: " .. prompt, "" })
 
 	-- 3. Clear input area
-	vim.api.nvim_buf_set_lines(buf, 4, -1, false, { "" })
+	pcall(vim.api.nvim_buf_set_lines, buf, 4, -1, false, { "" })
 
 	-- 4. Get response from Ollama
 	local response, err = M.ask_ollama(prompt)
 	if err then
-		vim.api.nvim_buf_set_lines(buf, -1, -1, false, { "Error: " .. err, "" })
+		pcall(vim.api.nvim_buf_set_lines, buf, -1, -1, false, { "Error: " .. err, "" })
 	else
-		-- 5. Process response with guaranteed safety
-		local response_lines = {}
+		-- 5. Process response with absolute safety
+		local response_lines = { "AI: " } -- Start first line
 
-		-- Handle nil or empty response
+		-- Handle nil/empty response
 		if not response or response == "" then
 			response = "No response received"
 		end
 
-		-- Split response into lines
-		for line in vim.split(response, "\n") do
-			if #response_lines == 0 then
-				table.insert(response_lines, "AI: " .. line)
-			else
-				table.insert(response_lines, "    " .. line)
+		-- Safely split response into lines
+		local lines = {}
+		for s in response:gmatch("[^\r\n]+") do
+			table.insert(lines, s)
+		end
+
+		-- Build output lines with proper formatting
+		if #lines > 0 then
+			response_lines[1] = response_lines[1] .. lines[1]
+			for i = 2, #lines do
+				table.insert(response_lines, "    " .. lines[i])
 			end
 		end
 
-		-- Add separator and empty lines
+		-- Add separator
 		table.insert(response_lines, "")
 		table.insert(response_lines, "----------------------------------------")
 		table.insert(response_lines, "")
 		table.insert(response_lines, "")
 
-		-- 6. Insert all lines safely using vim.split
-		vim.api.nvim_buf_set_lines(buf, -1, -1, false, response_lines)
+		-- 6. Insert lines one at a time (bulletproof against newline issues)
+		for _, line in ipairs(response_lines) do
+			pcall(vim.api.nvim_buf_set_lines, buf, -1, -1, false, { line })
+		end
 	end
 
 	-- 7. Return to insert mode
-	vim.api.nvim_win_set_cursor(win, { vim.api.nvim_buf_line_count(buf), 0 })
+	pcall(vim.api.nvim_win_set_cursor, win, { vim.api.nvim_buf_line_count(buf), 0 })
 	vim.cmd("startinsert")
 end
 
