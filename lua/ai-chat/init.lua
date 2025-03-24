@@ -31,13 +31,20 @@ local default_config = {
 
 -- Merge user configuration with defaults
 function M.setup(user_config)
-	M.config = vim.tbl_deep_extend("force", default_config, user_config or {})
+	-- Ensure all configuration sections exist and are tables
+	user_config = user_config or {}
+	user_config.window = user_config.window or {}
+	user_config.ollama = user_config.ollama or {}
+	user_config.keys = user_config.keys or {}
+	user_config.prompt = user_config.prompt or {}
+	user_config.prompt.dynamic = user_config.prompt.dynamic or {}
 
-	-- Set default window position/size if not specified
-	M.config.window = M.config.window or {}
-	M.config.window.width = M.config.window.width or 60
-	M.config.window.height = M.config.window.height or 20
-	M.config.window.border = M.config.window.border or "rounded"
+	-- Merge with defaults
+	M.config = vim.tbl_deep_extend("force", default_config, user_config)
+
+	-- Validate required fields
+	M.config.ollama.model = M.config.ollama.model or "deepseek-r1:8b"
+	M.config.ollama.base_url = M.config.ollama.base_url or "http://127.0.0.1:11434"
 
 	M.setup_keybindings()
 end
@@ -98,32 +105,35 @@ end
 
 -- Ask Ollama a question
 function M.ask_ollama(prompt)
-	-- Create temporary file for the prompt to avoid escaping issues
-	local tmpfile = os.tmpname()
-	local f = io.open(tmpfile, "w")
-	f:write(prompt)
-	f:close()
+	-- Input validation
+	if type(prompt) ~= "string" or #prompt == 0 then
+		return nil, "Prompt must be a non-empty string"
+	end
 
 	local cmd = string.format(
-		[[curl -s -X POST %s/api/generate -d @%s -H "Content-Type: application/json"]],
+		[[curl -s -X POST %s/api/generate -d '{"model": "%s", "prompt": "%s"}']],
 		M.config.ollama.base_url,
-		tmpfile
+		M.config.ollama.model,
+		prompt:gsub('"', '\\"'):gsub("\n", "\\n")
 	)
 
 	local response = vim.fn.system(cmd)
-	os.remove(tmpfile)
 
-	-- Error handling
+	-- Check for curl errors
 	if vim.v.shell_error ~= 0 then
-		return nil, "Failed to communicate with Ollama. Is it running?"
+		return nil, "Failed to connect to Ollama: " .. (response or "no response")
 	end
 
-	-- Parse response
+	-- Safe JSON parsing
 	local ok, json = pcall(vim.fn.json_decode, response)
 	if not ok then
-		return nil, "Invalid response from Ollama: " .. response
+		return nil, "Invalid JSON response: " .. (response or "empty response")
 	end
 
+	-- Check for Ollama errors
+	if type(json) ~= "table" then
+		return nil, "Unexpected response format"
+	end
 	if json.error then
 		return nil, json.error
 	end
@@ -166,6 +176,10 @@ end
 
 -- Open the chat window and interact with Ollama
 function M.open_chat_window()
+	if type(M.config) ~= "table" then
+		vim.notify("ai-chat: Configuration not initialized", vim.log.levels.ERROR)
+		return
+	end
 	local buf, win = M.create_floating_window()
 
 	-- Display a default prompt or dynamic prompt
