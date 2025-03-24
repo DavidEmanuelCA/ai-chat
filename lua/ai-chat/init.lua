@@ -143,13 +143,20 @@ function M.send_prompt()
 	if err then
 		vim.api.nvim_buf_set_lines(buf, -1, -1, false, { "Error: " .. err, "" })
 	else
-		vim.api.nvim_buf_set_lines(buf, -1, -1, false, {
-			"AI: " .. response:gsub("\n", "\nAI: "),
-			"",
-			"----------------------------------------",
-			"",
-			"",
-		})
+		-- Split response into lines and add prefix to each
+		local response_lines = { "AI: " } -- Start first line with AI prefix
+		for line in response:gmatch("[^\n]+") do
+			table.insert(response_lines, "    " .. line) -- Indent continuation lines
+		end
+		table.insert(response_lines, "") -- Add empty line after response
+
+		-- Add separator
+		table.insert(response_lines, "----------------------------------------")
+		table.insert(response_lines, "")
+		table.insert(response_lines, "")
+
+		-- Insert all lines at once
+		vim.api.nvim_buf_set_lines(buf, -1, -1, false, response_lines)
 	end
 
 	-- Return to insert mode
