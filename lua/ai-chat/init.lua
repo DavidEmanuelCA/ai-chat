@@ -123,7 +123,7 @@ function M.send_prompt()
 	local buf = vim.api.nvim_get_current_buf()
 	local win = vim.api.nvim_get_current_win()
 
-	-- Get user input (lines after the separator)
+	-- Get and validate user input
 	local input_lines = vim.api.nvim_buf_get_lines(buf, 4, -1, false)
 	local prompt = table.concat(input_lines, "\n"):gsub("^%s+", ""):gsub("%s+$", "")
 
@@ -138,28 +138,43 @@ function M.send_prompt()
 	-- Clear input area
 	vim.api.nvim_buf_set_lines(buf, 4, -1, false, { "" })
 
-	-- Get and display response
+	-- Get response from Ollama
 	local response, err = M.ask_ollama(prompt)
 	if err then
 		vim.api.nvim_buf_set_lines(buf, -1, -1, false, { "Error: " .. err, "" })
 	else
-		-- Split response into lines and add prefix to each
-		local response_lines = { "AI: " } -- Start first line with AI prefix
-		for line in response:gmatch("[^\n]+") do
-			table.insert(response_lines, "    " .. line) -- Indent continuation lines
+		-- Process the AI response safely
+		local formatted_lines = { "AI: " } -- Start first line
+
+		-- Split response into lines and handle empty responses
+		if type(response) == "string" and #response > 0 then
+			-- Split response into lines, trimming whitespace
+			for line in vim.gsplit(response:gsub("\r", ""), "\n", { plain = true }) do
+				if #line > 0 then
+					if #formatted_lines == 1 then
+						-- First line of response
+						formatted_lines[1] = formatted_lines[1] .. line
+					else
+						-- Subsequent lines
+						table.insert(formatted_lines, "    " .. line)
+					end
+				end
+			end
+		else
+			table.insert(formatted_lines, "    [No response content]")
 		end
-		table.insert(response_lines, "") -- Add empty line after response
 
-		-- Add separator
-		table.insert(response_lines, "----------------------------------------")
-		table.insert(response_lines, "")
-		table.insert(response_lines, "")
+		-- Add spacing and separator
+		table.insert(formatted_lines, "")
+		table.insert(formatted_lines, "----------------------------------------")
+		table.insert(formatted_lines, "")
+		table.insert(formatted_lines, "")
 
-		-- Insert all lines at once
-		vim.api.nvim_buf_set_lines(buf, -1, -1, false, response_lines)
+		-- Insert all lines safely
+		vim.api.nvim_buf_set_lines(buf, -1, -1, false, formatted_lines)
 	end
 
-	-- Return to insert mode
+	-- Return to insert mode at proper position
 	vim.api.nvim_win_set_cursor(win, { vim.api.nvim_buf_line_count(buf), 0 })
 	vim.cmd("startinsert")
 end
