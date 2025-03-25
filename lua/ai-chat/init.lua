@@ -67,7 +67,7 @@ function M.ask_ollama(prompt)
 	local f = io.open(tmpfile, "w")
 	f:write(
 		string.format(
-			'{"model": "%s", "prompt": "%s"}',
+			'{"model": "%s", "prompt": "%s", "stream": false}',
 			M.config.ollama.model,
 			prompt:gsub("\\", "\\\\"):gsub('"', '\\"'):gsub("\n", "\\n")
 		)
@@ -87,16 +87,31 @@ function M.ask_ollama(prompt)
 		return nil, "Ollama request failed: " .. (response or "no response")
 	end
 
-	local ok, json = pcall(vim.fn.json_decode, response)
-	if not ok then
-		return nil, "Invalid JSON response: " .. (response or "empty response")
+	-- Handle streaming JSON responses
+	local full_response = ""
+	local error_message = nil
+
+	-- Parse each JSON object in the response
+	for line in response:gmatch("[^\r\n]+") do
+		local ok, json = pcall(vim.fn.json_decode, line)
+		if ok then
+			if json.error then
+				error_message = json.error
+			end
+			if json.response then
+				full_response = full_response .. json.response
+			end
+		else
+			-- Log invalid JSON line but continue processing
+			vim.notify("Failed to parse JSON line: " .. line, vim.log.levels.WARN)
+		end
 	end
 
-	if json.error then
-		return nil, json.error
+	if error_message then
+		return nil, error_message
 	end
 
-	return json.response or json.text or "No response text found", nil
+	return full_response ~= "" and full_response or "No response received", nil
 end
 
 function M.open_chat_window()
@@ -123,45 +138,46 @@ function M.send_prompt()
 	local buf = vim.api.nvim_get_current_buf()
 	local win = vim.api.nvim_get_current_win()
 
-	-- 1. Sanitize input
+	-- Get user input
 	local input_lines = vim.api.nvim_buf_get_lines(buf, 4, -1, false)
-	local prompt = table.concat(input_lines, " "):gsub("%s+", " "):gsub("[\r\n]", " "):gsub("^%s*", ""):gsub("%s*$", "")
+	local prompt = table.concat(input_lines, " "):gsub("%s+", " "):gsub("^%s*", ""):gsub("%s*$", "")
 
 	if #prompt == 0 then
 		vim.api.nvim_echo({ { "Error: Empty prompt", "ErrorMsg" } }, true, {})
 		return
 	end
 
-	-- 2. Add sanitized user message
+	-- Add user message
 	vim.api.nvim_buf_set_lines(buf, -1, -1, false, { "You: " .. prompt, "" })
 
-	-- 3. Clear input
+	-- Clear input
 	vim.api.nvim_buf_set_lines(buf, 4, -1, false, { "" })
 
-	-- 4. Get response
+	-- Get and display response
 	local response, err = M.ask_ollama(prompt)
 	if err then
-		-- Sanitize error message
-		local safe_err = err:gsub("[\r\n]", " ")
-		vim.api.nvim_buf_set_lines(buf, -1, -1, false, { "Error: " .. safe_err, "" })
+		vim.api.nvim_buf_set_lines(buf, -1, -1, false, { "Error: " .. err, "" })
 	else
-		-- Sanitize and format response
-		local safe_response = (response or "No response received"):gsub("[\r\n]", " ")
-		local output_lines = {
-			"AI: " .. safe_response,
-			"",
-			"----------------------------------------",
-			"",
-			"",
-		}
-
-		-- Insert sanitized lines
-		for _, line in ipairs(output_lines) do
-			vim.api.nvim_buf_set_lines(buf, -1, -1, false, { line })
+		-- Split response into lines and format
+		local response_lines = {}
+		for line in vim.split(response, "\n") do
+			if #response_lines == 0 then
+				table.insert(response_lines, "AI: " .. line)
+			else
+				table.insert(response_lines, "    " .. line)
+			end
 		end
+
+		-- Add separator and empty lines
+		table.insert(response_lines, "")
+		table.insert(response_lines, "----------------------------------------")
+		table.insert(response_lines, "")
+		table.insert(response_lines, "")
+
+		vim.api.nvim_buf_set_lines(buf, -1, -1, false, response_lines)
 	end
 
-	-- 5. Reset cursor
+	-- Return to insert mode
 	vim.api.nvim_win_set_cursor(win, { 5, 0 })
 	vim.cmd("startinsert")
 end
