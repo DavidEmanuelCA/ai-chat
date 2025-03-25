@@ -87,31 +87,17 @@ function M.ask_ollama(prompt)
 		return nil, "Ollama request failed: " .. (response or "no response")
 	end
 
-	-- Handle streaming JSON responses
-	local full_response = ""
-	local error_message = nil
-
-	-- Parse each JSON object in the response
-	for line in response:gmatch("[^\r\n]+") do
-		local ok, json = pcall(vim.fn.json_decode, line)
-		if ok then
-			if json.error then
-				error_message = json.error
-			end
-			if json.response then
-				full_response = full_response .. json.response
-			end
-		else
-			-- Log invalid JSON line but continue processing
-			vim.notify("Failed to parse JSON line: " .. line, vim.log.levels.WARN)
-		end
+	-- Parse the complete JSON response
+	local ok, json = pcall(vim.fn.json_decode, response)
+	if not ok then
+		return nil, "Invalid JSON response: " .. response:gsub("[\r\n]", " "):sub(1, 100)
 	end
 
-	if error_message then
-		return nil, error_message
+	if json.error then
+		return nil, json.error
 	end
 
-	return full_response ~= "" and full_response or "No response received", nil
+	return json.response or json.text or "No response text found", nil
 end
 
 function M.open_chat_window()
@@ -138,7 +124,7 @@ function M.send_prompt()
 	local buf = vim.api.nvim_get_current_buf()
 	local win = vim.api.nvim_get_current_win()
 
-	-- Get user input
+	-- Get and sanitize user input
 	local input_lines = vim.api.nvim_buf_get_lines(buf, 4, -1, false)
 	local prompt = table.concat(input_lines, " "):gsub("%s+", " "):gsub("^%s*", ""):gsub("%s*$", "")
 
@@ -147,37 +133,39 @@ function M.send_prompt()
 		return
 	end
 
-	-- Add user message
+	-- Add user message to history
 	vim.api.nvim_buf_set_lines(buf, -1, -1, false, { "You: " .. prompt, "" })
 
-	-- Clear input
+	-- Clear input area
 	vim.api.nvim_buf_set_lines(buf, 4, -1, false, { "" })
 
 	-- Get and display response
 	local response, err = M.ask_ollama(prompt)
 	if err then
-		vim.api.nvim_buf_set_lines(buf, -1, -1, false, { "Error: " .. err, "" })
+		vim.api.nvim_buf_set_lines(buf, -1, -1, false, { "Error: " .. err:gsub("[\r\n]", " "), "" })
 	else
-		-- Split response into lines and format
-		local response_lines = {}
-		for line in vim.split(response, "\n") do
-			if #response_lines == 0 then
-				table.insert(response_lines, "AI: " .. line)
-			else
-				table.insert(response_lines, "    " .. line)
-			end
+		-- Process and format response
+		local sanitized_response = response:gsub("\r", ""):gsub("\n+", "\n")
+		local response_lines = vim.split(sanitized_response, "\n")
+
+		-- Format lines with proper indentation
+		for i, line in ipairs(response_lines) do
+			response_lines[i] = (i == 1) and "AI: " .. line or "    " .. line
 		end
 
 		-- Add separator and empty lines
-		table.insert(response_lines, "")
-		table.insert(response_lines, "----------------------------------------")
-		table.insert(response_lines, "")
-		table.insert(response_lines, "")
+		vim.list_extend(response_lines, {
+			"",
+			"----------------------------------------",
+			"",
+			"",
+		})
 
+		-- Insert lines safely
 		vim.api.nvim_buf_set_lines(buf, -1, -1, false, response_lines)
 	end
 
-	-- Return to insert mode
+	-- Return to insert mode at correct position
 	vim.api.nvim_win_set_cursor(win, { 5, 0 })
 	vim.cmd("startinsert")
 end
