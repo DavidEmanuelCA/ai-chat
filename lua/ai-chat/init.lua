@@ -123,45 +123,45 @@ function M.send_prompt()
 	local buf = vim.api.nvim_get_current_buf()
 	local win = vim.api.nvim_get_current_win()
 
-	-- 1. Get and validate user input
+	-- 1. Sanitize input
 	local input_lines = vim.api.nvim_buf_get_lines(buf, 4, -1, false)
-	local prompt = table.concat(input_lines, " "):gsub("%s+", " "):gsub("^%s*", ""):gsub("%s*$", "")
+	local prompt = table.concat(input_lines, " "):gsub("%s+", " "):gsub("[\r\n]", " "):gsub("^%s*", ""):gsub("%s*$", "")
 
 	if #prompt == 0 then
 		vim.api.nvim_echo({ { "Error: Empty prompt", "ErrorMsg" } }, true, {})
 		return
 	end
 
-	-- 2. Add user message to history (single line)
+	-- 2. Add sanitized user message
 	vim.api.nvim_buf_set_lines(buf, -1, -1, false, { "You: " .. prompt, "" })
 
-	-- 3. Clear input area
+	-- 3. Clear input
 	vim.api.nvim_buf_set_lines(buf, 4, -1, false, { "" })
 
-	-- 4. Get response from Ollama
+	-- 4. Get response
 	local response, err = M.ask_ollama(prompt)
 	if err then
-		vim.api.nvim_buf_set_lines(buf, -1, -1, false, { "Error: " .. err, "" })
+		-- Sanitize error message
+		local safe_err = err:gsub("[\r\n]", " ")
+		vim.api.nvim_buf_set_lines(buf, -1, -1, false, { "Error: " .. safe_err, "" })
 	else
-		-- 5. Process response with absolute safety
-		local safe_response = type(response) == "string" and response or "No response received"
-
-		-- Create safe output lines
+		-- Sanitize and format response
+		local safe_response = (response or "No response received"):gsub("[\r\n]", " ")
 		local output_lines = {
-			"AI: " .. safe_response:gsub("[\r\n]", " "), -- Force single line
+			"AI: " .. safe_response,
 			"",
 			"----------------------------------------",
 			"",
 			"",
 		}
 
-		-- 6. Insert lines one at a time (bulletproof)
+		-- Insert sanitized lines
 		for _, line in ipairs(output_lines) do
 			vim.api.nvim_buf_set_lines(buf, -1, -1, false, { line })
 		end
 	end
 
-	-- 7. Return to insert mode at input position
+	-- 5. Reset cursor
 	vim.api.nvim_win_set_cursor(win, { 5, 0 })
 	vim.cmd("startinsert")
 end
