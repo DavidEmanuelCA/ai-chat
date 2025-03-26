@@ -1,7 +1,6 @@
 # 🧠 Neovim Ollama AI Plugin
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE) 
-[![Neovim](https://img.shields.io/badge/Neovim-0.9%2B-%#57A143?logo=neovim)](https://neovim.io)
 
 **Engineering Design Project** · ASTE 3440 · Spring 2025  
 *A minimal Neovim plugin for interacting with local AI models via Ollama.  
@@ -18,9 +17,6 @@ Developed with assistance from [Deepseek AI](https://deepseek.com).*
 - [Prerequisites](#-prerequisites)
 - [Installation](#-installation)
 - [Configuration](#-configuration)
-- [Usage](#-usage)
-- [Contributing](#-contributing)
-- [License](#-license)
 
 ---
 
